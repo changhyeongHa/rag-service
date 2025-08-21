@@ -1,0 +1,208 @@
+# ========================================
+# RAG Service - Git Ignore File
+# ========================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# ========================================
+# RAG Service Specific
+# ========================================
+
+# Database credentials and connection strings
+mongodb_credentials.json
+database_url.txt
+*.db
+*.sqlite
+*.sqlite3
+
+# Azure OpenAI credentials
+openai_credentials.json
+azure_openai_key.txt
+
+# Vector embeddings and indexes
+embeddings/
+vector_index/
+*.index
+*.faiss
+*.npy
+*.pkl
+*.pickle
+
+# Logs
+logs/
+*.log
+search_logs/
+generation_logs/
+
+# Temporary files
+temp/
+tmp/
+.tmp/
+document_cache/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Local development
+local_config.py
+local_settings.py
+
+# Test documents and data
+test_documents/
+sample_data/
+*.pdf
+*.docx
+*.txt
+documents/
+
+# Performance test files
+performance_test_*.json
+load_test_queries.txt
+benchmark_results/
+
+# Cache
+.cache/
+cache/
+llm_cache/
+search_cache/
+
+# Model files
+models/
+*.model
+checkpoints/
+
+# Jupyter notebooks (except example notebooks)
+*.ipynb
+!examples/*.ipynb
+
+# Large data files
+*.csv
+*.json
+!config/*.json
+!examples/*.json
+
+# Backup files
+backup/
+*.backup
+*.bak
+
+# Configuration files with secrets
+config_local.yaml
+config_prod.yaml
+secrets.yaml
+.env

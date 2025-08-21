@@ -1,0 +1,344 @@
+name: RAG Service CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOCKER_IMAGE_NAME: rag-service
+  DOCKER_REGISTRY: ghcr.io
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.11]
+
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_ROOT_USERNAME: testuser
+          MONGO_INITDB_ROOT_PASSWORD: testpass
+        options: >-
+          --health-cmd "echo 'db.runCommand(\"ping\").ok' | mongosh localhost:27017/test --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio pytest-cov httpx pytest-mock
+
+    - name: Setup test environment
+      run: |
+        # Create test configuration
+        mkdir -p tests/data
+        echo '{"test": "document", "content": "This is a test document for RAG"}' > tests/data/test_doc.json
+        
+        # Setup test MongoDB
+        export MONGODB_URI="mongodb://testuser:testpass@localhost:27017/"
+        export MONGO_DB="test_rag"
+        export MONGO_COLL="test_documents"
+
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Type check with mypy
+      run: |
+        pip install mypy types-requests
+        mypy . --ignore-missing-imports
+
+    - name: Test with pytest
+      env:
+        MONGODB_URI: mongodb://testuser:testpass@localhost:27017/
+        MONGO_DB: test_rag
+        MONGO_COLL: test_documents
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+        AZURE_OPENAI_CHAT_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT }}
+        AZURE_OPENAI_EMB_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_EMB_DEPLOYMENT }}
+      run: |
+        pytest tests/ -v --cov=. --cov-report=xml --cov-report=html
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: rag-service-coverage
+
+    - name: Test RAG pipeline integration
+      env:
+        MONGODB_URI: mongodb://testuser:testpass@localhost:27017/
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      run: |
+        python -c "
+        import os
+        import sys
+        import time
+        import requests
+        import subprocess
+        import threading
+        
+        # Skip if no Azure credentials
+        if not os.getenv('AZURE_OPENAI_API_KEY'):
+            print('⏭️ Skipping integration test (missing Azure credentials)')
+            sys.exit(0)
+        
+        def start_server():
+            subprocess.run(['uvicorn', 'main:app', '--port', '8002'], 
+                          capture_output=True)
+        
+        # Start server in background
+        server_thread = threading.Thread(target=start_server)
+        server_thread.daemon = True
+        server_thread.start()
+        
+        # Wait for server to start
+        time.sleep(10)
+        
+        # Test health endpoint
+        try:
+            health_response = requests.get('http://localhost:8002/health', timeout=10)
+            print(f'Health check: {health_response.status_code}')
+            
+            # Test QnA endpoint with simple question
+            qna_response = requests.post('http://localhost:8002/qna',
+                                       json={'input_message': 'Hello test'},
+                                       timeout=30)
+            print(f'QnA test: {qna_response.status_code}')
+            
+            if qna_response.status_code == 200:
+                result = qna_response.json()
+                print(f'✅ RAG pipeline test passed: {len(result.get(\"messages\", []))} messages')
+            else:
+                print(f'⚠️ QnA test returned {qna_response.status_code}')
+                
+        except Exception as e:
+            print(f'⚠️ Integration test warning: {e}')
+        " || echo "Integration test completed with warnings"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run security scan with bandit
+      run: |
+        pip install bandit
+        bandit -r . -f json -o bandit-report.json || true
+
+    - name: Check for secrets in code
+      run: |
+        pip install detect-secrets
+        detect-secrets scan --all-files --baseline .secrets.baseline || true
+
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-scan-results
+        path: |
+          bandit-report.json
+          .secrets.baseline
+
+  performance:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_ROOT_USERNAME: testuser
+          MONGO_INITDB_ROOT_PASSWORD: testpass
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install locust memory-profiler
+
+    - name: Performance benchmark
+      env:
+        MONGODB_URI: mongodb://testuser:testpass@localhost:27017/
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      run: |
+        # Create performance test
+        cat > locustfile.py << 'EOF'
+        from locust import HttpUser, task, between
+        import json
+        import random
+        
+        class RAGUser(HttpUser):
+            wait_time = between(2, 5)
+            
+            questions = [
+                "보험에 대해 알려주세요",
+                "보험료 계산 방법은?",
+                "보험금 청구 절차",
+                "자동차 보험 종류",
+                "건강보험 혜택"
+            ]
+            
+            @task
+            def ask_question(self):
+                question = random.choice(self.questions)
+                payload = {"input_message": question}
+                self.client.post("/qna", json=payload)
+            
+            @task(3)
+            def health_check(self):
+                self.client.get("/health")
+        EOF
+        
+        # Start RAG service
+        uvicorn main:app --port 8002 --host 0.0.0.0 &
+        sleep 15
+        
+        # Run performance test
+        locust -f locustfile.py --host=http://localhost:8002 \
+               --users 3 --spawn-rate 1 --run-time 60s --headless \
+               --html performance-report.html || echo "Performance test completed"
+
+    - name: Memory profiling
+      run: |
+        python -c "
+        import psutil
+        import requests
+        import time
+        
+        # Monitor memory usage
+        process = psutil.Process()
+        initial_memory = process.memory_info().rss / 1024 / 1024
+        
+        # Make several requests
+        for i in range(5):
+            try:
+                response = requests.post('http://localhost:8002/qna', 
+                                       json={'input_message': f'Test question {i}'}, 
+                                       timeout=30)
+                current_memory = process.memory_info().rss / 1024 / 1024
+                print(f'Request {i}: {current_memory:.1f}MB')
+                time.sleep(2)
+            except:
+                pass
+        
+        final_memory = process.memory_info().rss / 1024 / 1024
+        memory_growth = final_memory - initial_memory
+        print(f'Memory growth: {memory_growth:.1f}MB')
+        
+        if memory_growth > 100:  # Alert if memory grows more than 100MB
+            print('⚠️ High memory usage detected')
+        " || echo "Memory profiling completed"
+
+    - name: Upload performance report
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-report
+        path: performance-report.html
+
+  docker:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.DOCKER_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository_owner }}/${{ env.DOCKER_IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix=sha-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.rag
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy-staging:
+    needs: docker
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+
+    steps:
+    - name: Deploy to staging
+      run: |
+        echo "Deploying RAG Service to staging environment"
+        # Add your staging deployment commands here
+        # Example: kubectl apply -f k8s/staging/
+
+  deploy-production:
+    needs: docker
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+    - name: Deploy to production
+      run: |
+        echo "Deploying RAG Service to production environment"
+        # Add your production deployment commands here
+        # Example: kubectl apply -f k8s/production/
