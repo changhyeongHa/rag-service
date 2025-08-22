@@ -9,7 +9,7 @@
 ### 🌟 핵심 기능
 - **🔍 하이브리드 검색**: 텍스트 검색과 벡터 검색의 지능적 융합 (RRF)
 - **🧠 대화형 AI**: Azure OpenAI GPT-4 기반 자연어 답변 생성
-- **📚 인용 출처**: 답변 근거가 된 문서와 페이지 정보 자동 제공
+- **📚 인용 출처**: 답변 근거가 된 문서와 페이지 정보 + 다운로드 링크 자동 제공
 - **🎯 품질 보증**: AI 심판을 통한 답변 품질 자동 평가 시스템
 - **⚡ 성능 최적화**: LRU 캐시와 연결 풀링으로 고속 처리
 - **🔄 RESTful API**: 표준 HTTP 인터페이스와 자동 문서화
@@ -51,6 +51,8 @@ graph TB
 ### 🎯 POST /qna
 질문에 대한 RAG 기반 지능형 답변 생성
 
+> **📋 최신 업데이트**: `citations` 배열에 `download_link` 필드가 추가되어 원본 문서 다운로드 링크를 제공합니다.
+
 #### 요청 (Request)
 ```http
 POST /qna
@@ -91,12 +93,12 @@ Content-Type: application/json
     {
       "title": "자동차보험_기본약관.pdf",
       "page": "23",
-      "relevance_score": 0.92
+      "download_link": "https://www.hwgeneralins.com/upload/hmpag_upload/product/movable(2501)_..."
     },
     {
       "title": "보험료산출기준_가이드.pdf", 
       "page": "15",
-      "relevance_score": 0.87
+      "download_link": "https://www.hwgeneralins.com/upload/hmpag_upload/product/movable(2502)_..."
     }
   ],
   "metadata": {
@@ -115,8 +117,17 @@ Content-Type: application/json
 |------|------|------|
 | `success` | boolean | 답변 생성 성공 여부 (AI 심판 평가 결과) |
 | `messages` | array | 질문-답변 대화 기록 |
-| `citations` | array | 답변 근거가 된 문서 출처 정보 |
+| `citations` | array | 답변 근거가 된 문서 출처 정보 (제목, 페이지, 다운로드 링크 포함) |
 | `metadata` | object | 처리 성능 및 신뢰도 정보 |
+
+#### Citations 객체 구조
+각 `citations` 배열의 항목은 다음 구조를 가집니다:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `title` | string | 원본 문서 파일명 |
+| `page` | string | 문서 내 페이지 번호 |
+| `download_link` | string | 원본 문서 다운로드 URL |
 
 ### ❤️ GET /health
 서비스 상태 및 연결 상태 확인
@@ -497,14 +508,14 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # 포트 노출
-EXPOSE 8002
+EXPOSE 8000
 
 # 헬스체크 설정
 HEALTHCHECK --interval=30s --timeout=15s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8002/health || exit 1
+  CMD curl -f http://localhost:8000/health || exit 1
 
 # 서비스 실행
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ### 🚀 실행 방법
@@ -517,7 +528,7 @@ docker build -t rag-service -f Dockerfile.rag .
 # 컨테이너 실행
 docker run -d \
   --name rag-service \
-  -p 8002:8002 \
+  -p 8000:8000 \
   -e MONGODB_URI=your_mongodb_uri \
   -e AZURE_OPENAI_API_KEY=your_key \
   -e AZURE_OPENAI_ENDPOINT=your_endpoint \
@@ -541,14 +552,14 @@ docker-compose -f docker-compose-voice.yml up rag-service -d
 ### 🌐 cURL 테스트
 ```bash
 # 기본 질의응답
-curl -X POST "http://localhost:8002/qna" \
+curl -X POST "http://localhost:8000/qna" \
   -H "Content-Type: application/json" \
   -d '{
     "input_message": "수렵보험이란 무엇인가요?"
   }'
 
 # 필터링된 검색
-curl -X POST "http://localhost:8002/qna" \
+curl -X POST "http://localhost:8000/qna" \
   -H "Content-Type: application/json" \
   -d '{
     "input_message": "보험료 계산 방법",
@@ -560,7 +571,7 @@ curl -X POST "http://localhost:8002/qna" \
   }'
 
 # 인용 정보 없이 답변만
-curl -X POST "http://localhost:8002/qna" \
+curl -X POST "http://localhost:8000/qna" \
   -H "Content-Type: application/json" \
   -d '{
     "input_message": "보험금 청구 절차",
@@ -568,10 +579,10 @@ curl -X POST "http://localhost:8002/qna" \
   }'
 
 # 서비스 상태 확인
-curl -X GET "http://localhost:8002/health"
+curl -X GET "http://localhost:8000/health"
 
 # 통계 정보 조회
-curl -X GET "http://localhost:8002/stats"
+curl -X GET "http://localhost:8000/stats"
 ```
 
 ### 🐍 Python 클라이언트
@@ -581,7 +592,7 @@ import time
 from typing import Optional, Dict, List
 
 class RAGClient:
-    def __init__(self, base_url="http://localhost:8002"):
+    def __init__(self, base_url="http://localhost:8000"):
         self.base_url = base_url
     
     def ask_question(
@@ -618,8 +629,10 @@ class RAGClient:
                 if result.get('citations'):
                     print("\n📚 참조 문서:")
                     for citation in result['citations']:
-                        score = citation.get('relevance_score', 'N/A')
-                        print(f"  📄 {citation['title']} (페이지 {citation['page']}) - 관련도: {score}")
+                        download_link = citation.get('download_link', '')
+                        print(f"  📄 {citation['title']} (페이지 {citation['page']})")
+                        if download_link:
+                            print(f"     🔗 다운로드: {download_link[:60]}...")
                 
                 if result.get('metadata'):
                     meta = result['metadata']
@@ -721,7 +734,7 @@ if __name__ == "__main__":
 const fetch = require('node-fetch');
 
 class RAGClient {
-    constructor(baseUrl = 'http://localhost:8002') {
+    constructor(baseUrl = 'http://localhost:8000') {
         this.baseUrl = baseUrl;
     }
 
